@@ -4,7 +4,6 @@
   "version": "1.1.0",
   "description": "将 PDF、EPUB 书籍文件按章节拆分为独立文档，方便 NotebookLM 分析（MOBI 支持有限，建议先转 EPUB/PDF）",
   "permissions": [
-    "activeTab",
     "downloads"
   ],
   "host_permissions": [
@@ -33,12 +32,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["libs/*"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }
-

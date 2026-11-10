@@ -4,6 +4,11 @@ let selectedFile = null;
 let chapters = [];
 let selectionVersion = 0;
 
+function releaseChapterFiles() {
+  for (const file of window._chapterFiles || []) URL.revokeObjectURL(file.url);
+  window._chapterFiles = null;
+}
+
 document.getElementById('selectFileBtn').addEventListener('click', () => {
   document.getElementById('fileInput').click();
 });
@@ -22,7 +27,7 @@ async function loadSelectedFile(file) {
   const version = ++selectionVersion;
   selectedFile = file;
   chapters = [];
-  window._chapterFiles = null;
+  releaseChapterFiles();
   document.getElementById('downloadAllBtn').disabled = true;
   document.getElementById('chapterPreview').style.display = 'none';
   document.getElementById('progress').style.display = 'none';
@@ -56,7 +61,8 @@ document.getElementById('splitBtn').addEventListener('click', async () => {
     showStatus('请先选择文件', 'error');
     return;
   }
-  const version = selectionVersion;
+  // A new split also invalidates downloads queued for an earlier split.
+  const version = ++selectionVersion;
 
   const progressDiv = document.getElementById('progress');
   const progressBar = progressDiv.querySelector('.progress-bar');
@@ -68,6 +74,7 @@ document.getElementById('splitBtn').addEventListener('click', async () => {
 
   try {
     // 拆分章节并准备下载
+    releaseChapterFiles();
     const chapterFiles = [];
 
     for (let i = 0; i < chapters.length; i++) {
@@ -160,6 +167,7 @@ async function downloadAllChapters(chapterFiles) {
   let successCount = 0;
   let failCount = 0;
   for (let i = 0; i < chapterFiles.length; i++) {
+    if (version !== selectionVersion) break;
     const file = chapterFiles[i];
     try {
       await chrome.downloads.download({

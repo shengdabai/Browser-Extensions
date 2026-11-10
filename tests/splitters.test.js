@@ -43,7 +43,7 @@ for (const [file, split] of parsers) {
     ];
     const ctx = load(file, {pdfjsLib: {
       GlobalWorkerOptions: {},
-      getDocument: () => ({promise: Promise.resolve({
+      getDocument: () => ({destroy: async () => {}, promise: Promise.resolve({
         numPages: 1,
         getPage: async () => ({getTextContent: async () => ({
           items: lines.map(str => ({str, hasEOL: true}))
@@ -77,7 +77,7 @@ for (const [file, split] of parsers) {
   test(`${file}: PDF extraction preserves line breaks for chapter detection`, async () => {
     const globals = {pdfjsLib: {
       GlobalWorkerOptions: {},
-      getDocument: () => ({promise: Promise.resolve({
+      getDocument: () => ({destroy: async () => {}, promise: Promise.resolve({
         numPages: 1,
         getPage: async () => ({getTextContent: async () => ({items: [
           {str: '第一章：开始', hasEOL: true},
@@ -208,7 +208,7 @@ for (const [file, split] of parsers) {
     const items = lines.flatMap(line => /[\u4e00-\u9fff]/.test(line)
       ? Array.from(line, (str, i) => ({str, hasEOL: i === line.length - 1}))
       : [{str: 'Hello'}, {str: 'world', hasEOL: true}]);
-    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({promise: Promise.resolve({
+    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({destroy: async () => {}, promise: Promise.resolve({
       numPages: 1, getPage: async () => ({getTextContent: async () => ({items})})
     })})}});
     const result = file.includes('fileParser')
@@ -223,7 +223,7 @@ for (const [file, split] of parsers) {
   test(`${file}: PDF normalizes Kangxi radicals in fragmented chapter headings`, async () => {
     const lines = ['前言', '第⼀章：开始', '正文', '第⼆章：继续', '尾声'];
     const items = lines.flatMap(line => Array.from(line, (str, i) => ({str, hasEOL: i === line.length - 1})));
-    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({promise: Promise.resolve({
+    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({destroy: async () => {}, promise: Promise.resolve({
       numPages: 1, getPage: async () => ({getTextContent: async () => ({items})})
     })})}});
     const result = file.includes('fileParser')
@@ -246,7 +246,7 @@ for (const [file, split] of parsers) {
   test(`${file}: PDF supplement radicals become unified ideographs in chapter titles`, async () => {
     const lines = ['第三章：⻓⻔⻅⻛⻢⻆⻜⻦⻥⻰⻩⻝⻋⻉⻚⻮⻨', '正文'];
     const items = lines.flatMap(line => Array.from(line, (str, i) => ({str, hasEOL: i === line.length - 1})));
-    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({promise: Promise.resolve({
+    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({destroy: async () => {}, promise: Promise.resolve({
       numPages: 1, getPage: async () => ({getTextContent: async () => ({items})})
     })})}});
     const result = file.includes('fileParser')
@@ -464,4 +464,94 @@ test('book popup stops submitting old downloads after selecting another file', a
   assert.equal(calls.length, 1);
   assert.equal(alerts.length, 0);
   assert.equal(document.getElementById('downloadAllBtn').disabled, true);
+});
+
+for (const [file] of parsers) {
+  test(`${file}: untrusted PDFs cannot enable dynamic code evaluation`, async () => {
+    let parameters;
+    const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: options => {
+      parameters = options;
+      return {destroy: async () => {}, promise: Promise.resolve({numPages: 0})};
+    }}});
+    if (file.includes('fileParser')) await ctx.parsePDF({arrayBuffer: async () => new ArrayBuffer(0)});
+    else await ctx.processPDF(new Uint8Array(), {autoDetect: true, pattern: 'auto'});
+    assert.equal(parameters.isEvalSupported, false);
+  });
+
+  for (const failure of [null, 'load', 'text']) {
+    test(`${file}: PDF worker is released after ${failure || 'successful extraction'}`, async () => {
+      let destroyed = 0;
+      const ctx = load(file, {pdfjsLib: {GlobalWorkerOptions: {}, getDocument: () => ({
+        destroy: async () => {destroyed++;},
+        promise: failure === 'load' ? Promise.reject(new Error('load')) : Promise.resolve({
+          numPages: 1, getPage: async () => ({getTextContent: async () => {
+            if (failure === 'text') throw new Error('text');
+            return {items: [{str: '正文', hasEOL: true}]};
+          }})
+        })
+      })}});
+      const parse = () => file.includes('fileParser')
+        ? ctx.parsePDF({arrayBuffer: async () => new ArrayBuffer(0)})
+        : ctx.processPDF(new Uint8Array(), {autoDetect: true, pattern: 'auto'});
+      if (failure) await assert.rejects(parse, new RegExp(failure));
+      else assert.equal((await parse()).length, 1);
+      assert.equal(destroyed, 1);
+    });
+  }
+}
+
+test('NotebookLM popup stops old downloads after the selected file changes', async () => {
+  const {ctx, document, select} = popup();
+  let finish;
+  const calls = [];
+  ctx.chrome.downloads.download = options => {
+    calls.push(options);
+    return calls.length === 1 ? new Promise(resolve => {finish = resolve;}) : Promise.resolve(2);
+  };
+  const pending = ctx.downloadAllChapters([
+    {url: 'blob:old1', filename: 'one.txt'}, {url: 'blob:old2', filename: 'two.txt'}
+  ]);
+  ctx.parsePDF = async () => chapter('新书');
+  await select(file('new.pdf'));
+  finish(1);
+  await pending;
+  assert.equal(calls.length, 1);
+  assert.match(document.getElementById('status').textContent, /成功检测到/);
+});
+
+test('NotebookLM popup releases obsolete blob URLs on split and file change', async () => {
+  const {ctx, document, select} = popup();
+  const revoked = [];
+  let next = 0;
+  ctx.URL.createObjectURL = () => `blob:${++next}`;
+  ctx.URL.revokeObjectURL = url => revoked.push(url);
+  ctx.parsePDF = async () => chapter('开始');
+  await select(file('book.pdf'));
+  const split = document.getElementById('splitBtn').listeners.click;
+  await split();
+  await split();
+  assert.deepEqual(revoked, ['blob:1']);
+  await select(file('new.pdf'));
+  assert.deepEqual(revoked, ['blob:1', 'blob:2']);
+});
+
+test('NotebookLM re-splitting cancels the previous download queue', async () => {
+  const {ctx, document, select} = popup();
+  ctx.setTimeout = () => {}; // Keep automatic downloads queued for this test.
+  ctx.parsePDF = async () => [...chapter('一'), ...chapter('二')];
+  await select(file('book.pdf'));
+  const split = document.getElementById('splitBtn').listeners.click;
+  await split();
+  let finish;
+  const calls = [];
+  ctx.chrome.downloads.download = options => {
+    calls.push(options);
+    return calls.length === 1 ? new Promise(resolve => {finish = resolve;}) : Promise.resolve(2);
+  };
+  const pending = ctx.downloadAllChapters(ctx.window._chapterFiles);
+  await split();
+  ctx.setTimeout = callback => callback();
+  finish(1);
+  await pending;
+  assert.equal(calls.length, 1);
 });

@@ -5,8 +5,7 @@
   "description": "将PDF、EPUB、MOBI等书籍格式按章节拆分为独立文档，方便NotebookLM进行详细分析",
   "permissions": [
     "storage",
-    "downloads",
-    "activeTab"
+    "downloads"
   ],
   "host_permissions": [
     "https://notebooklm.google.com/*"
@@ -33,12 +32,5 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["libs/*"],
-      "matches": ["<all_urls>"]
-    }
   ]
 }
-

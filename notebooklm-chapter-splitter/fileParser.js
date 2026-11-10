@@ -44,20 +44,26 @@ async function parsePDF(file, options = {}) {
   await loadPDFJS();
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // Disable PDF.js dynamic code generation (CVE-2024-4367 workaround).
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, isEvalSupported: false });
+  try {
+    const pdf = await loadingTask.promise;
 
-  let fullText = '';
+    let fullText = '';
 
-  // 提取所有页面的文本
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = pdfPageText(textContent.items);
-    fullText += pageText + '\n';
+    // 提取所有页面的文本
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = pdfPageText(textContent.items);
+      fullText += pageText + '\n';
+    }
+
+    // 检测章节
+    return detectChapters(fullText, options);
+  } finally {
+    await loadingTask.destroy();
   }
-
-  // 检测章节
-  return detectChapters(fullText, options);
 }
 
 // Clear equivalents from Unicode EquivalentUnifiedIdeograph.txt:
