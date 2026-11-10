@@ -31,20 +31,25 @@ async function processPDF(fileData, options) {
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
 
-  const loadingTask = pdfjsLib.getDocument({ data: fileData });
-  const pdf = await loadingTask.promise;
+  // Disable PDF.js dynamic code generation (CVE-2024-4367 workaround).
+  const loadingTask = pdfjsLib.getDocument({ data: fileData, isEvalSupported: false });
+  try {
+    const pdf = await loadingTask.promise;
 
-  let fullText = '';
+    let fullText = '';
   
-  // 提取所有页面的文本
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = pdfPageText(textContent.items);
-    fullText += pageText + '\n';
-  }
+    // 提取所有页面的文本
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = pdfPageText(textContent.items);
+      fullText += pageText + '\n';
+    }
 
-  return splitIntoChapters(fullText, options);
+    return splitIntoChapters(fullText, options);
+  } finally {
+    await loadingTask.destroy();
+  }
 }
 
 // Clear equivalents from Unicode EquivalentUnifiedIdeograph.txt:
